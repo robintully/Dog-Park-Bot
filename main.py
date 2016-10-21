@@ -1,5 +1,6 @@
 from flask import Flask, request
 from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime,timedelta
 import json
 import requests
 
@@ -27,15 +28,6 @@ def reply(user_id,msg):
 	resp = requests.post("https://graph.facebook.com/v2.6/me/messages?access_token=" + access_token, json=data)
 	print(resp.content)
 
-# @app.route('/', methods = ['POST'])
-# def handle_incoming_messages():
-# 	data = request.json
-# 	sender = data['entry'][0]['messaging'][0]['sender']['id']
-# 	message = data['entry'][0]['messaging'][0]['message']['text']
-# 	attachment = data['entry'][0]['messaging'][0]['message']['attachments'][0]['payload']['url']
-# 	reply(sender,attachment)
-# 	return "ok"
-
 @app.route('/', methods = ['POST'])
 def handle_incoming_messages():
 	data = request.json
@@ -54,6 +46,7 @@ def handle_incoming_messages():
 		output_message = "Welcome " + dogs.dogs_names + "\n You are currently home \n" + output_message
 	if attachment_url.find('https://scontent.xx.fbcdn.net/t39.1997') == 0:
 		senders_dogs.in_park = not (senders_dogs.in_park)
+		senders_dogs.timestamp = datetime.utcnow()
 		db.session.add(senders_dogs)
 		db.session.commit()
 		if senders_dogs.in_park:
@@ -61,7 +54,7 @@ def handle_incoming_messages():
 		else:
 			output_message = "Enjoy home " + senders_dogs.dogs_names + "! \n" + output_message
 	if recieved_message == "park":
-		output_message = dogs_in_park_string() + output_message
+		output_message = dogs_in_park() + output_message
 	if recieved_message == "profile":
 		output_message = "You are " + senders_dogs.dogs_names + "! \n" + output_message
 	if recieved_message == "reset":
@@ -71,11 +64,20 @@ def handle_incoming_messages():
 	reply(sender,output_message)
 	return "ok"
 
-
+# if lastplus.date < datetime.datetime.now()-datetime.timedelta(seconds=20):
+#     print "Go"
 # Formatting data methods
-def dogs_in_park_string():
+def dogs_in_park():
 	dogs = Dogs.query.filter_by(in_park = True).all()
-	string = "These Dogs are at the Park: \n"
+	for dog in dogs:
+	    if dog.timestamp < datetime.now()-timedelta(seconds=20):
+	        dog.in_park = False
+	        db.session.add(dog)
+	        db.session.commit()
+	        dogs.remove(dog)
+	if dogs == []:
+	    return "The park is currently empty  \n"
+	string = "These dogs are at the park: \n"
 	for index,dogs in enumerate(dogs):
 		string += str(index + 1)  + ". " + dogs.dogs_names + "\n"
 	return string
@@ -92,9 +94,12 @@ class Dogs(db.Model):
 	dogs_names = db.Column(db.String(120), unique=True)
 	owner = db.Column(db.String(120), unique=True)
 	in_park = db.Column(db.Boolean)
+	timestamp = db.Column(db.DateTime)
+
 	def __init__(self, dogs_names,owner,in_park):
 		self.dogs_names = dogs_names
 		self.in_park = in_park
 		self.owner = owner
+		self.timestamp = datetime.utcnow()
 	def __repr__(self):
 		return '<Name %r>' % self.dogs_names
