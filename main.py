@@ -3,6 +3,7 @@ from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime,timedelta
 import json
 import requests
+import pdb
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////tmp/test.db'
@@ -20,16 +21,54 @@ def handle_verification():
 		return 'wrong,token'
 
 # Routes for sending messages
-def reply(user_id,msg):
-	data = {
-	"recipient": {"id": user_id},
-	"message": {"text": msg}
-	}
+def reply(user_id,msg,include_button_choices,currently_at_park):
+	if currently_at_park:
+		change_location_message = "Go home"
+	else:
+		change_location_message= "Go to the park"
+	if include_button_choices:
+			data = 	{
+			  "recipient":{
+			    "id":user_id
+			  },
+			  "message":{
+			    "text":msg,
+			    "quick_replies":[
+				{
+				  "content_type":"text",
+				  "title": change_location_message,
+				  "payload":"CHANGE LOCATION"
+				},
+			      {
+			        "content_type":"text",
+			        "title": "Who is at the park?",
+			        "payload":"DOGS AT PARK"
+			      },
+			      {
+			        "content_type":"text",
+			        "title":"Reset me",
+			        "payload":"RESET ME"
+			      }
+			    ]
+			  }
+			}
+	else:
+		data = 	{
+		  "recipient":{
+			"id":user_id
+		  },
+		  "message":{
+			"text":msg
+		  }
+		}
 	resp = requests.post("https://graph.facebook.com/v2.6/me/messages?access_token=" + access_token, json=data)
 	print(resp.content)
 
+
+
 @app.route('/', methods = ['POST'])
 def handle_incoming_messages():
+	# Recieveed Variables
 	data = request.json
 	sender = data['entry'][0]['messaging'][0]['sender']['id']
 	recieved_payload = data['entry'][0]['messaging'][0]['message']
@@ -38,13 +77,16 @@ def handle_incoming_messages():
 	if attachment_url:
 		attachment_url = attachment_url[0]['payload']['url']
 	senders_dogs = Dogs.query.filter_by(owner = int(sender)).first()
-	output_message = "\n Please give me a thumbs up to change your location; or one of the following commands, park, profile, reset"
+	output_message = "\n Please select from the following or send a thumbs up \n"
+	include_button_choices = True
+
 	if senders_dogs is None:
-		dogs = Dogs(recieved_message,int(sender),False)
-		db.session.add(dogs)
+		senders_dogs = Dogs(recieved_message,int(sender),False)
+		db.session.add(senders_dogs)
 		db.session.commit()
-		output_message = "Welcome " + dogs.dogs_names + "\n You are currently home \n" + output_message
-	if attachment_url.find('https://scontent.xx.fbcdn.net/t39.1997') == 0:
+		output_message = "Welcome " + senders_dogs.dogs_names + "\n You are currently home \n If this is not the name of your dogs please select or type Reset me"
+	# change location
+	if recieved_message == "Go home" or recieved_message == "Go to the park" or attachment_url.find('https://scontent.xx.fbcdn.net/t39.1997') == 0:
 		senders_dogs.in_park = not (senders_dogs.in_park)
 		senders_dogs.timestamp = datetime.utcnow()
 		db.session.add(senders_dogs)
@@ -53,15 +95,15 @@ def handle_incoming_messages():
 			output_message = "Enjoy the dog park " + senders_dogs.dogs_names + "! \n" + output_message
 		else:
 			output_message = "Enjoy home " + senders_dogs.dogs_names + "! \n" + output_message
-	if recieved_message == "park":
+	# at the park
+	if recieved_message == "Who is at the park?":
 		output_message = dogs_in_park() + output_message
-	if recieved_message == "profile":
-		output_message = "You are " + senders_dogs.dogs_names + "! \n" + output_message
-	if recieved_message == "reset":
+	if recieved_message == "Reset me":
 		db.session.delete(senders_dogs)
 		db.session.commit()
-		output_message = "Your data has been reset. \n Please enter the name of your dogs."
-	reply(sender,output_message)
+		output_message = "Your data has been reset. \n Please enter the name of your dogs on one line ('Rover, Spot, and Olive')."
+		include_button_choices = False
+	reply(sender,output_message,include_button_choices,senders_dogs.in_park)
 	return "ok"
 
 # if lastplus.date < datetime.datetime.now()-datetime.timedelta(seconds=20):
@@ -103,3 +145,5 @@ class Dogs(db.Model):
 		self.timestamp = datetime.utcnow()
 	def __repr__(self):
 		return '<Name %r>' % self.dogs_names
+if __name__ == "__main__":
+    app.run()
